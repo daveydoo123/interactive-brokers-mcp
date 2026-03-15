@@ -26,7 +26,8 @@ export interface FlexStatementResponse {
 export class FlexQueryClient {
   private client: AxiosInstance;
   private token: string;
-  private baseUrl = "https://gdcdyn.interactivebrokers.com/Universal/servlet";
+  // Fixed: gdcdyn → ndcdyn, /Universal/servlet → /AccountManagement/FlexWebService
+  private baseUrl = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService";
 
   constructor(config: FlexQueryClientConfig) {
     this.token = config.token;
@@ -44,7 +45,7 @@ export class FlexQueryClient {
     try {
       Logger.log(`[FLEX-QUERY] Sending request for query ID: ${queryId}`);
       
-      const url = `${this.baseUrl}/FlexStatementService.SendRequest`;
+      const url = `${this.baseUrl}/SendRequest`;
       const params = {
         t: this.token,
         q: queryId,
@@ -95,7 +96,7 @@ export class FlexQueryClient {
     try {
       Logger.log(`[FLEX-QUERY] Getting statement for reference code: ${referenceCode}`);
       
-      const url = `${this.baseUrl}/FlexStatementService.GetStatement`;
+      const url = `${this.baseUrl}/GetStatement`;
       const params = {
         t: this.token,
         q: referenceCode,
