@@ -51,7 +51,7 @@ describe('FlexQueryClient', () => {
       const result = await client.sendRequest(mockQueryId);
 
       expect(mockGet).toHaveBeenCalledWith(
-        'https://gdcdyn.interactivebrokers.com/Universal/servlet/FlexStatementService.SendRequest',
+        'https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/SendRequest',
         {
           params: {
             t: mockToken,
@@ -147,7 +147,7 @@ describe('FlexQueryClient', () => {
       const result = await client.getStatement(mockReferenceCode);
 
       expect(mockGet).toHaveBeenCalledWith(
-        'https://gdcdyn.interactivebrokers.com/Universal/servlet/FlexStatementService.GetStatement',
+        'https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/GetStatement',
         {
           params: {
             t: mockToken,
