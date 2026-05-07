@@ -1,6 +1,6 @@
 // test/ib-client.test.ts
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { IBClient } from '../src/ib-client.js';
+import { IBClient, SymbolNotFoundError } from '../src/ib-client.js';
 import axios from 'axios';
 
 // Mock axios
@@ -176,12 +176,66 @@ describe('IBClient', () => {
 
       it('should throw error if symbol not found', async () => {
         const mockClient = vi.mocked(axios.create).mock.results[0].value;
-        
+
         // Mock empty search response
         mockClient.get.mockResolvedValueOnce({ data: [] });
-        
+
+        // The specific "Symbol ... not found" message should reach the caller
+        // (not be swallowed by the generic "Failed to retrieve market data" catch)
         await expect(client.getMarketData('INVALID')).rejects.toThrow(
-          'Failed to retrieve market data'
+          'Symbol INVALID not found'
+        );
+      });
+
+      it('should propagate SymbolNotFoundError instance to callers', async () => {
+        const mockClient = vi.mocked(axios.create).mock.results[0].value;
+
+        mockClient.get.mockResolvedValueOnce({ data: [] });
+
+        await expect(client.getMarketData('INVALID')).rejects.toBeInstanceOf(SymbolNotFoundError);
+      });
+
+      it('should include exchange in secdef/search URL when provided', async () => {
+        const mockClient = vi.mocked(axios.create).mock.results[0].value;
+
+        mockClient.get.mockResolvedValueOnce({
+          data: [{ conid: 265598, symbol: 'AAPL' }],
+        });
+        mockClient.get.mockResolvedValueOnce({
+          data: [{ conid: 265598, price: 150.25 }],
+        });
+
+        await client.getMarketData('AAPL', 'NASDAQ');
+
+        expect(mockClient.get).toHaveBeenCalledWith(
+          expect.stringContaining('/iserver/secdef/search?symbol=AAPL&name=NASDAQ')
+        );
+      });
+
+      it('should URL-encode the exchange parameter', async () => {
+        const mockClient = vi.mocked(axios.create).mock.results[0].value;
+
+        mockClient.get.mockResolvedValueOnce({
+          data: [{ conid: 265598, symbol: 'AAPL' }],
+        });
+        mockClient.get.mockResolvedValueOnce({
+          data: [{ conid: 265598, price: 150.25 }],
+        });
+
+        await client.getMarketData('AAPL', 'NYSE ARCA');
+
+        expect(mockClient.get).toHaveBeenCalledWith(
+          expect.stringContaining('&name=NYSE%20ARCA')
+        );
+      });
+
+      it('should mention the exchange in the not-found error when provided', async () => {
+        const mockClient = vi.mocked(axios.create).mock.results[0].value;
+
+        mockClient.get.mockResolvedValueOnce({ data: [] });
+
+        await expect(client.getMarketData('INVALID', 'NASDAQ')).rejects.toThrow(
+          'Symbol INVALID on NASDAQ not found'
         );
       });
     });
@@ -258,6 +312,133 @@ describe('IBClient', () => {
             ]),
           })
         );
+      });
+
+      it('should default tif to DAY when not specified', async () => {
+        const mockClient = vi.mocked(axios.create).mock.results[0].value;
+
+        mockClient.get.mockResolvedValueOnce({
+          data: [{ conid: 265598, symbol: 'AAPL' }],
+        });
+        mockClient.post.mockResolvedValueOnce({
+          data: [{ id: 'order-123' }],
+        });
+
+        await client.placeOrder({
+          accountId: 'U12345',
+          symbol: 'AAPL',
+          action: 'BUY',
+          orderType: 'MKT',
+          quantity: 10,
+        });
+
+        expect(mockClient.post).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({
+            orders: expect.arrayContaining([
+              expect.objectContaining({ tif: 'DAY' }),
+            ]),
+          })
+        );
+      });
+
+      it('should use the user-provided tif when given', async () => {
+        const mockClient = vi.mocked(axios.create).mock.results[0].value;
+
+        mockClient.get.mockResolvedValueOnce({
+          data: [{ conid: 265598, symbol: 'AAPL' }],
+        });
+        mockClient.post.mockResolvedValueOnce({
+          data: [{ id: 'order-123' }],
+        });
+
+        await client.placeOrder({
+          accountId: 'U12345',
+          symbol: 'AAPL',
+          action: 'BUY',
+          orderType: 'MKT',
+          quantity: 10,
+          tif: 'GTC',
+        });
+
+        expect(mockClient.post).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({
+            orders: expect.arrayContaining([
+              expect.objectContaining({ tif: 'GTC' }),
+            ]),
+          })
+        );
+      });
+
+      it('should include exchange in secdef/search URL when provided', async () => {
+        const mockClient = vi.mocked(axios.create).mock.results[0].value;
+
+        mockClient.get.mockResolvedValueOnce({
+          data: [{ conid: 265598, symbol: 'AAPL' }],
+        });
+        mockClient.post.mockResolvedValueOnce({
+          data: [{ id: 'order-123' }],
+        });
+
+        await client.placeOrder({
+          accountId: 'U12345',
+          symbol: 'AAPL',
+          action: 'BUY',
+          orderType: 'MKT',
+          quantity: 10,
+          exchange: 'NASDAQ',
+        });
+
+        expect(mockClient.get).toHaveBeenCalledWith(
+          expect.stringContaining('/iserver/secdef/search?symbol=AAPL&name=NASDAQ')
+        );
+      });
+
+      it('should include exchange in the order payload when specified', async () => {
+        const mockClient = vi.mocked(axios.create).mock.results[0].value;
+
+        mockClient.get.mockResolvedValueOnce({
+          data: [{ conid: 265598, symbol: 'AAPL' }],
+        });
+        mockClient.post.mockResolvedValueOnce({
+          data: [{ id: 'order-123' }],
+        });
+
+        await client.placeOrder({
+          accountId: 'U12345',
+          symbol: 'AAPL',
+          action: 'BUY',
+          orderType: 'MKT',
+          quantity: 10,
+          exchange: 'NASDAQ',
+        });
+
+        expect(mockClient.post).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({
+            orders: expect.arrayContaining([
+              expect.objectContaining({ exchange: 'NASDAQ' }),
+            ]),
+          })
+        );
+      });
+
+      it('should propagate SymbolNotFoundError when symbol cannot be resolved', async () => {
+        const mockClient = vi.mocked(axios.create).mock.results[0].value;
+
+        // Mock empty search response — no matching symbol
+        mockClient.get.mockResolvedValueOnce({ data: [] });
+
+        await expect(
+          client.placeOrder({
+            accountId: 'U12345',
+            symbol: 'INVALID',
+            action: 'BUY',
+            orderType: 'MKT',
+            quantity: 10,
+          })
+        ).rejects.toThrow('Symbol INVALID not found');
       });
 
       it('should include stopPrice for stop orders', async () => {

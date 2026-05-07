@@ -21,12 +21,24 @@ interface OrderRequest {
   stopPrice?: number;
   suppressConfirmations?: boolean;
   exchange?: string;
-  tif?: string;
+  tif?: "DAY" | "GTC" | "IOC" | "OPG";
 }
 
 const isError = (error: unknown): error is Error => {
   return error instanceof Error;
 };
+
+/**
+ * Thrown when a symbol (optionally scoped to an exchange) cannot be resolved
+ * via `secdef/search`. Distinct error class so callers receive the specific
+ * "Symbol ... not found" message instead of a swallowed generic one.
+ */
+export class SymbolNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SymbolNotFoundError";
+  }
+}
 
 export class IBClient {
   private client!: AxiosInstance;
@@ -366,9 +378,9 @@ export class IBClient {
         searchUrl += `&name=${encodeURIComponent(exchange)}`;
       }
       const searchResponse = await this.client.get(searchUrl);
-      
+
       if (!searchResponse.data || searchResponse.data.length === 0) {
-        throw new Error(`Symbol ${symbol}${exchange ? ' on ' + exchange : ''} not found`);
+        throw new SymbolNotFoundError(`Symbol ${symbol}${exchange ? ' on ' + exchange : ''} not found`);
       }
 
       const contract = searchResponse.data[0];
@@ -389,14 +401,19 @@ export class IBClient {
       };
     } catch (error) {
       Logger.error("Failed to get market data:", error);
-      
+
       // Check if this is likely an authentication error
       if (this.isAuthenticationError(error)) {
         const authError = new Error(`Authentication required to retrieve market data for ${symbol}. Please authenticate with Interactive Brokers first.`);
         (authError as any).isAuthError = true;
         throw authError;
       }
-      
+
+      // Preserve the specific "Symbol ... not found" message for callers
+      if (error instanceof SymbolNotFoundError) {
+        throw error;
+      }
+
       throw new Error(`Failed to retrieve market data for ${symbol}`);
     }
   }
@@ -434,9 +451,9 @@ export class IBClient {
         searchUrl += `&name=${encodeURIComponent(orderRequest.exchange)}`;
       }
       const searchResponse = await this.client.get(searchUrl);
-      
+
       if (!searchResponse.data || searchResponse.data.length === 0) {
-        throw new Error(`Symbol ${orderRequest.symbol}${orderRequest.exchange ? ' on ' + orderRequest.exchange : ''} not found`);
+        throw new SymbolNotFoundError(`Symbol ${orderRequest.symbol}${orderRequest.exchange ? ' on ' + orderRequest.exchange : ''} not found`);
       }
 
       const contract = searchResponse.data[0];
@@ -491,14 +508,19 @@ export class IBClient {
       return response.data;
     } catch (error) {
       Logger.error("Failed to place order:", error);
-      
+
       // Check if this is likely an authentication error
       if (this.isAuthenticationError(error)) {
         const authError = new Error("Authentication required to place orders. Please authenticate with Interactive Brokers first.");
         (authError as any).isAuthError = true;
         throw authError;
       }
-      
+
+      // Preserve the specific "Symbol ... not found" message for callers
+      if (error instanceof SymbolNotFoundError) {
+        throw error;
+      }
+
       throw new Error("Failed to place order");
     }
   }

@@ -173,6 +173,30 @@ describe('ToolHandlers', () => {
       );
     });
 
+    it('should forward exchange and tif to ibClient.placeOrder when provided', async () => {
+      const mockResponse = { orderId: '123', status: 'Submitted' };
+      mockIBClient.placeOrder = vi.fn().mockResolvedValue(mockResponse);
+
+      const orderInput = {
+        accountId: 'U12345',
+        symbol: 'AAPL',
+        action: 'BUY' as const,
+        orderType: 'MKT' as const,
+        quantity: 10,
+        exchange: 'NASDAQ',
+        tif: 'GTC' as const,
+      };
+
+      await handlers.placeOrder(orderInput);
+
+      expect(mockIBClient.placeOrder).toHaveBeenCalledWith(
+        expect.objectContaining({
+          exchange: 'NASDAQ',
+          tif: 'GTC',
+        })
+      );
+    });
+
     it('should handle order placement errors', async () => {
       mockIBClient.placeOrder = vi.fn().mockRejectedValue(new Error('Order failed'));
 
