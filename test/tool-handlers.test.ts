@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ToolHandlers, ToolHandlerContext } from '../src/tool-handlers.js';
 import { IBClient } from '../src/ib-client.js';
 import { IBGatewayManager } from '../src/gateway-manager.js';
+import open from 'open';
 
 // Mock dependencies
 vi.mock('../src/ib-client.js');
@@ -22,6 +23,7 @@ describe('ToolHandlers', () => {
     // Create mock IBClient
     mockIBClient = {
       checkAuthenticationStatus: vi.fn().mockResolvedValue(true),
+      reauthenticate: vi.fn().mockResolvedValue(undefined),
       getAccountInfo: vi.fn().mockResolvedValue({ accounts: [] }),
       getPositions: vi.fn().mockResolvedValue([]),
       getMarketData: vi.fn().mockResolvedValue({ price: 150 }),
@@ -31,6 +33,10 @@ describe('ToolHandlers', () => {
       confirmOrder: vi.fn().mockResolvedValue({ confirmed: true }),
       destroy: vi.fn(),
       updatePort: vi.fn(),
+      getAlerts: vi.fn().mockResolvedValue([]),
+      createAlert: vi.fn().mockResolvedValue({ request_id: '1' }),
+      activateAlert: vi.fn().mockResolvedValue({ success: true }),
+      deleteAlert: vi.fn().mockResolvedValue({ success: true }),
     } as any;
 
     // Create mock GatewayManager
@@ -233,6 +239,74 @@ describe('ToolHandlers', () => {
     });
   });
 
+  describe('authenticate', () => {
+    it('should open browser and return polling response in browser mode', async () => {
+      context.config.IB_HEADLESS_MODE = false;
+      vi.mocked(open).mockResolvedValueOnce(undefined as any);
+
+      const result = await handlers.authenticate({ confirm: true });
+
+      const response = JSON.parse(result.content[0].text);
+      expect(response.mode).toBe('browser');
+      expect(response.browserOpened).toBe(true);
+      expect(response.polling).toBe(true);
+      expect(response.authUrl).toContain('localhost:5000');
+      expect(vi.mocked(open)).toHaveBeenCalledWith(response.authUrl);
+    });
+
+    it('should return manual instructions when browser fails to open', async () => {
+      context.config.IB_HEADLESS_MODE = false;
+      vi.mocked(open).mockRejectedValueOnce(new Error('No browser available'));
+
+      const result = await handlers.authenticate({ confirm: true });
+
+      const response = JSON.parse(result.content[0].text);
+      expect(response.mode).toBe('manual');
+      expect(response.browserOpened).toBe(false);
+      expect(response.instructions).toBeDefined();
+      expect(response.instructions.length).toBeGreaterThan(0);
+    });
+
+    it('should return full response with instructions in browser mode', async () => {
+      context.config.IB_HEADLESS_MODE = false;
+      vi.mocked(open).mockResolvedValueOnce(undefined as any);
+
+      const result = await handlers.authenticate({ confirm: true });
+
+      const response = JSON.parse(result.content[0].text);
+      expect(response.mode).toBe('browser');
+      expect(response.browserOpened).toBe(true);
+      expect(response.polling).toBe(true);
+      expect(response.message).toContain('authentication interface opened');
+      expect(response.note).toContain('Polling for authentication completion');
+      expect(response.instructions).toHaveLength(5);
+      expect(response.instructions[0]).toContain('opened in your default browser');
+    });
+
+    it('should return missing credentials error in headless mode', async () => {
+      context.config.IB_HEADLESS_MODE = true;
+      context.config.IB_USERNAME = '';
+      context.config.IB_PASSWORD_AUTH = '';
+
+      const result = await handlers.authenticate({ confirm: true });
+
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('IB_USERNAME');
+    });
+
+    it('should handle non-Error thrown by open', async () => {
+      context.config.IB_HEADLESS_MODE = false;
+      vi.mocked(open).mockRejectedValueOnce('spawn ENOENT');
+
+      const result = await handlers.authenticate({ confirm: true });
+
+      const response = JSON.parse(result.content[0].text);
+      expect(response.mode).toBe('manual');
+      expect(response.browserOpened).toBe(false);
+    });
+  });
+
   describe('Headless Mode Authentication', () => {
     it('should trigger auth in headless mode', async () => {
       context.config.IB_HEADLESS_MODE = true;
@@ -248,6 +322,115 @@ describe('ToolHandlers', () => {
       const result = await handlers.getAccountInfo({ confirm: true });
 
       expect(result.content).toBeDefined();
+    });
+  });
+
+  describe('ensureAuth — browser mode', () => {
+    beforeEach(() => {
+      context.config.IB_HEADLESS_MODE = false;
+    });
+
+    it('should return early when already authenticated', async () => {
+      mockIBClient.checkAuthenticationStatus = vi.fn().mockResolvedValue(true);
+      mockIBClient.reauthenticate = vi.fn();
+
+      await (handlers as any).ensureAuth();
+
+      expect(mockIBClient.reauthenticate).not.toHaveBeenCalled();
+    });
+
+    it('should throw when not authenticated on both checks', async () => {
+      mockIBClient.checkAuthenticationStatus = vi.fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false);
+      mockIBClient.reauthenticate = vi.fn();
+
+      await expect((handlers as any).ensureAuth())
+        .rejects.toThrow('Authentication required');
+      expect(mockIBClient.reauthenticate).not.toHaveBeenCalled();
+    });
+
+    it('should call reauthenticate when auth status flips to true', async () => {
+      mockIBClient.checkAuthenticationStatus = vi.fn()
+        .mockResolvedValueOnce(false)  // Continue past early return
+        .mockResolvedValueOnce(true);  // Browser path: now authenticated
+      mockIBClient.reauthenticate = vi.fn().mockResolvedValue(undefined);
+
+      await (handlers as any).ensureAuth();
+
+      expect(mockIBClient.reauthenticate).toHaveBeenCalled();
+    });
+
+    it('should proceed even if reauthenticate fails', async () => {
+      mockIBClient.checkAuthenticationStatus = vi.fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+      mockIBClient.reauthenticate = vi.fn().mockRejectedValue(new Error('Reauth failed'));
+
+      // Should not throw — error is caught and logged
+      await expect((handlers as any).ensureAuth()).resolves.not.toThrow();
+      expect(mockIBClient.reauthenticate).toHaveBeenCalled();
+    });
+  });
+
+  describe('startBrowserAuthPolling', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('should poll and call reauthenticate when auth detected', async () => {
+      mockIBClient.checkAuthenticationStatus = vi.fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+      mockIBClient.reauthenticate = vi.fn().mockResolvedValue(undefined);
+
+      (handlers as any).startBrowserAuthPolling('https://localhost:5000', 5000);
+      await vi.runAllTimersAsync();
+
+      expect(mockIBClient.checkAuthenticationStatus).toHaveBeenCalledTimes(2);
+      expect(mockIBClient.reauthenticate).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not call reauthenticate when auth never detected', async () => {
+      mockIBClient.checkAuthenticationStatus = vi.fn().mockResolvedValue(false);
+      mockIBClient.reauthenticate = vi.fn();
+
+      (handlers as any).startBrowserAuthPolling('https://localhost:5000', 5000);
+      await vi.runAllTimersAsync();
+
+      expect(mockIBClient.checkAuthenticationStatus).toHaveBeenCalledTimes(60);
+      expect(mockIBClient.reauthenticate).not.toHaveBeenCalled();
+    });
+
+    it('should handle checkAuthenticationStatus throwing without stopping', async () => {
+      mockIBClient.checkAuthenticationStatus = vi.fn()
+        .mockRejectedValueOnce(new Error('Network error'))
+        .mockResolvedValueOnce(true);
+      mockIBClient.reauthenticate = vi.fn().mockResolvedValue(undefined);
+
+      (handlers as any).startBrowserAuthPolling('https://localhost:5000', 5000);
+      await vi.runAllTimersAsync();
+
+      expect(mockIBClient.checkAuthenticationStatus).toHaveBeenCalledTimes(2);
+      expect(mockIBClient.reauthenticate).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('getAlerts', () => {
+    it('should return alerts for account', async () => {
+      const mockAlerts = [{ alertId: '1', alertName: 'Price Alert' }];
+      mockIBClient.getAlerts = vi.fn().mockResolvedValue(mockAlerts);
+
+      const result = await handlers.getAlerts({ accountId: 'U12345' });
+
+      expect(result.content).toBeDefined();
+      expect(result.content[0].type).toBe('text');
+      expect(mockGatewayManager.ensureGatewayReady).toHaveBeenCalled();
+      expect(mockIBClient.getAlerts).toHaveBeenCalledWith('U12345');
     });
   });
 
