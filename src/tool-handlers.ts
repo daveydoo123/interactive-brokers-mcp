@@ -476,6 +476,8 @@ export class ToolHandlers {
         price: input.price,
         stopPrice: input.stopPrice,
         suppressConfirmations: input.suppressConfirmations,
+        exchange: input.exchange,
+        tif: input.tif,
       });
       return {
         content: [
