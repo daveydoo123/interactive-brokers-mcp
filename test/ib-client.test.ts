@@ -353,6 +353,51 @@ describe('IBClient', () => {
     });
   });
 
+  describe('reauthenticate', () => {
+    it('should reauthenticate and start tickle on success', async () => {
+      const mockAuthClient = {
+        post: vi.fn().mockResolvedValue({ data: {} }),
+        get: vi.fn().mockResolvedValue({
+          data: { authenticated: true },
+        }),
+      };
+      
+      vi.mocked(axios.create).mockReturnValueOnce(mockAuthClient as any);
+      
+      await client.reauthenticate();
+      
+      expect(mockAuthClient.post).toHaveBeenCalledWith('/iserver/reauthenticate');
+      expect(mockAuthClient.get).toHaveBeenCalledWith('/iserver/auth/status');
+    });
+
+    it('should handle reauth when status returns false', async () => {
+      const mockAuthClient = {
+        post: vi.fn().mockResolvedValue({ data: {} }),
+        get: vi.fn().mockResolvedValue({
+          data: { authenticated: false },
+        }),
+      };
+      
+      vi.mocked(axios.create).mockReturnValueOnce(mockAuthClient as any);
+      
+      // Should not throw — handled internally
+      await expect(client.reauthenticate()).resolves.not.toThrow();
+      expect(mockAuthClient.post).toHaveBeenCalledWith('/iserver/reauthenticate');
+    });
+
+    it('should handle network errors gracefully', async () => {
+      const mockAuthClient = {
+        post: vi.fn().mockRejectedValue(new Error('Connection refused')),
+        get: vi.fn(),
+      };
+      
+      vi.mocked(axios.create).mockReturnValueOnce(mockAuthClient as any);
+      
+      // Should not throw — errors are caught internally
+      await expect(client.reauthenticate()).resolves.not.toThrow();
+    });
+  });
+
   describe('Cleanup', () => {
     it('should stop tickle on destroy', () => {
       // Start with authenticated state to trigger tickle
