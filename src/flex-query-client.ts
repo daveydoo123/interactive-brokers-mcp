@@ -2,18 +2,18 @@ import axios, { AxiosInstance } from "axios";
 import { Logger } from "./logger.js";
 import { parseStringPromise } from "xml2js";
 
-export interface FlexQueryClientConfig {
+interface FlexQueryClientConfig {
   token: string;
 }
 
-export interface FlexQueryResponse {
+interface FlexQueryResponse {
   referenceCode?: string;
   url?: string;
   error?: string;
   errorCode?: string;
 }
 
-export interface FlexStatementResponse {
+interface FlexStatementResponse {
   data?: string; // XML data
   error?: string;
   errorCode?: string;
