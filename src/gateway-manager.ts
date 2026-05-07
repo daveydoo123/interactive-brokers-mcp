@@ -156,8 +156,10 @@ export class IBGatewayManager {
   // Detect whether the current Linux system uses musl libc (Alpine, etc.) rather than glibc.
   // The bundled glibc JRE cannot exec on musl — its ELF interpreter /lib64/ld-linux-x86-64.so.2
   // does not exist there, producing an opaque ENOENT at spawn time.
-  static isMuslLibc(): boolean {
-    if (process.platform !== 'linux') {
+  // The platform argument is injected so tests can exercise the matrix without mutating
+  // process.platform (which is non-configurable on some Node versions).
+  static isMuslLibc(platform: NodeJS.Platform = process.platform): boolean {
+    if (platform !== 'linux') {
       return false;
     }
     // process.report.getReport() exposes glibcVersionRuntime when glibc is present.
@@ -384,10 +386,16 @@ export class IBGatewayManager {
 
       this.gatewayProcess.on('exit', (code, signal) => {
         this.log(`🛑 Gateway process exited with code ${code}, signal ${signal}`);
-        if (!this.isReady && code !== 0 && code !== null) {
+        // Any exit before the gateway became ready is a failure: a clean exit-0 means the JVM
+        // terminated without ever opening the HTTP port (e.g. config error), and code===null
+        // means the process was killed by a signal (e.g. OOM). Recording spawnFailure for all
+        // of these makes waitForGateway() bail out fast instead of polling for 30s.
+        if (!this.isReady && !this.spawnFailure) {
+          const exitDescriptor =
+            code !== null ? `code ${code}` : `signal ${signal ?? 'unknown'}`;
           this.spawnFailure = {
-            reason: `IB Gateway process exited with code ${code} before becoming ready`,
-            details: stderrTail.trim() || `(no stderr captured; signal=${signal ?? 'none'})`,
+            reason: `IB Gateway process exited (${exitDescriptor}) before becoming ready`,
+            details: stderrTail.trim() || `(no stderr captured)`,
           };
         }
         this.gatewayProcess = null;
