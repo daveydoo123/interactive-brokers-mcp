@@ -198,11 +198,12 @@ export class FlexQueryClient {
       
       if (statementResponse.error) {
         const code = statementResponse.errorCode ?? "";
+        const normalizedError = statementResponse.error.toLowerCase();
         const isTransient =
           FlexQueryClient.TRANSIENT_GET_STATEMENT_ERROR_CODES.has(code) ||
-          statementResponse.error.includes("in progress") ||
-          statementResponse.error.includes("not ready") ||
-          statementResponse.error.includes("try again");
+          normalizedError.includes("in progress") ||
+          normalizedError.includes("not ready") ||
+          normalizedError.includes("try again");
 
         if (isTransient) {
           Logger.log(
@@ -243,6 +244,5 @@ export class FlexQueryClient {
     }
   }
 }
-
 
 

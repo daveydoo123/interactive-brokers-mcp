@@ -340,6 +340,41 @@ describe('FlexQueryClient', () => {
       expect(mockGet).toHaveBeenCalledTimes(2);
     });
 
+    it('should retry when fallback transient message casing differs', async () => {
+      const sendResponseXml = `<?xml version="1.0" encoding="UTF-8"?>
+<FlexStatementResponse timestamp="26 August, 2023 01:59 PM EDT">
+  <Status>Success</Status>
+  <ReferenceCode>${mockReferenceCode}</ReferenceCode>
+</FlexStatementResponse>`;
+
+      const transientXml = `<?xml version="1.0" encoding="UTF-8"?>
+<FlexStatementResponse timestamp="26 August, 2023 02:00 PM EDT">
+  <Status>Fail</Status>
+  <ErrorCode>9999</ErrorCode>
+  <ErrorMessage>Statement could not be retrieved. Try Again Shortly.</ErrorMessage>
+</FlexStatementResponse>`;
+
+      const statementXml = `<?xml version="1.0" encoding="UTF-8"?>
+<FlexQueryResponse queryName="Test Query" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U12345" />
+  </FlexStatements>
+</FlexQueryResponse>`;
+
+      const mockGet = vi.fn()
+        .mockResolvedValueOnce({ data: sendResponseXml })
+        .mockResolvedValueOnce({ data: transientXml })
+        .mockResolvedValueOnce({ data: statementXml });
+
+      (axios.create as any).mockReturnValue({ get: mockGet });
+      client = new FlexQueryClient({ token: mockToken });
+
+      const result = await client.executeQuery(mockQueryId, 3, 10);
+
+      expect(result).toEqual({ data: statementXml });
+      expect(mockGet).toHaveBeenCalledTimes(3);
+    });
+
     it('should return error when sendRequest fails', async () => {
       const sendResponseXml = `<?xml version="1.0" encoding="UTF-8"?>
 <FlexStatementResponse timestamp="26 August, 2023 01:59 PM EDT">
@@ -446,4 +481,3 @@ describe('FlexQueryClient', () => {
     });
   });
 });
-
