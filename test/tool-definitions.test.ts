@@ -164,7 +164,52 @@ describe('Tool Definitions - Zod Schemas', () => {
         quantity: 10,
         suppressConfirmations: true,
       };
-      
+
+      const result = PlaceOrderZodSchema.safeParse(validOrder);
+      expect(result.success).toBe(true);
+    });
+
+    it.each(['DAY', 'GTC', 'IOC', 'OPG'] as const)(
+      'should accept tif value %s',
+      (tif) => {
+        const validOrder = {
+          accountId: 'U12345',
+          symbol: 'AAPL',
+          action: 'BUY' as const,
+          orderType: 'MKT' as const,
+          quantity: 10,
+          tif,
+        };
+
+        const result = PlaceOrderZodSchema.safeParse(validOrder);
+        expect(result.success).toBe(true);
+      }
+    );
+
+    it('should reject an invalid tif value', () => {
+      const invalidOrder = {
+        accountId: 'U12345',
+        symbol: 'AAPL',
+        action: 'BUY' as const,
+        orderType: 'MKT' as const,
+        quantity: 10,
+        tif: 'BAD',
+      };
+
+      const result = PlaceOrderZodSchema.safeParse(invalidOrder);
+      expect(result.success).toBe(false);
+    });
+
+    it('should accept exchange when provided alongside required fields', () => {
+      const validOrder = {
+        accountId: 'U12345',
+        symbol: 'AAPL',
+        action: 'BUY' as const,
+        orderType: 'MKT' as const,
+        quantity: 10,
+        exchange: 'NASDAQ',
+      };
+
       const result = PlaceOrderZodSchema.safeParse(validOrder);
       expect(result.success).toBe(true);
     });
