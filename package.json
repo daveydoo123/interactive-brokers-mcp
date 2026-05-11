@@ -11,7 +11,11 @@
   "files": [
     "dist/**/*",
     "ib-gateway/**/*",
-    "runtime/**/*",
+    "runtime/darwin-arm64/**/*",
+    "runtime/darwin-x64/**/*",
+    "runtime/linux-arm64/**/*",
+    "runtime/linux-x64/**/*",
+    "runtime/win32-x64/**/*",
     "install/**/*",
     "README.md",
     "LICENSE"

@@ -3,12 +3,19 @@ import { promises as fs, existsSync as fsExistsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
+import { tmpdir } from 'os';
 import { Logger } from './logger.js';
 import { PortUtils } from './utils/port-utils.js';
 import { ConfigUtils } from './utils/config-utils.js';
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const packageJson = require('../package.json') as { version: string };
+
+const MUSL_RUNTIME_DOWNLOADS: Record<string, string> = {
+  'linux-x64-musl': 'https://download.bell-sw.com/java/11.0.31+11/bellsoft-jre11.0.31+11-linux-x64-musl.tar.gz',
+  'linux-arm64-musl': 'https://download.bell-sw.com/java/11.0.31+11/bellsoft-jre11.0.31+11-linux-aarch64-musl.tar.gz',
+};
 
 export class IBGatewayManager {
   private gatewayProcess: ChildProcess | null = null;
@@ -135,22 +142,103 @@ export class IBGatewayManager {
 
   // Removed forceKillGateway - we never kill gateway processes anymore
 
-  private getJavaPath(): string {
+  private static resolveRuntimePlatform(
+    platform: NodeJS.Platform = process.platform,
+    arch: string = process.arch,
+  ): string {
+    let runtimePlatform = `${platform}-${arch}`;
+    if (platform === 'linux' && IBGatewayManager.isMuslLibc(platform)) {
+      runtimePlatform = `${runtimePlatform}-musl`;
+    }
+    return runtimePlatform;
+  }
+
+  private async getJavaPath(): Promise<string> {
     const isWindows = process.platform === 'win32';
     const javaExecutable = isWindows ? 'java.exe' : 'java';
-
-    let platform = `${process.platform}-${process.arch}`;
-    if (process.platform === 'linux' && IBGatewayManager.isMuslLibc()) {
-      platform = `${platform}-musl`;
-    }
+    const platform = IBGatewayManager.resolveRuntimePlatform();
 
     const runtimePath = path.join(this.jreDir, platform, 'bin', javaExecutable);
+
+    if (!fsExistsSync(runtimePath)) {
+      await this.ensureRuntimeAvailable(platform, runtimePath);
+    }
 
     if (!fsExistsSync(runtimePath)) {
       throw new Error(`Custom runtime not found for platform: ${platform}. Expected at: ${runtimePath}`);
     }
 
     return runtimePath;
+  }
+
+  private async ensureRuntimeAvailable(platform: string, runtimePath: string): Promise<void> {
+    const runtimeUrl = MUSL_RUNTIME_DOWNLOADS[platform];
+    if (!runtimeUrl) {
+      throw new Error(`Custom runtime not found for platform: ${platform}. Expected at: ${runtimePath}`);
+    }
+
+    this.log(`⬇️ Bundled runtime missing for ${platform}; downloading a public musl JRE...`);
+    await this.downloadAndInstallRuntime(platform, runtimeUrl);
+  }
+
+  private async downloadAndInstallRuntime(platform: string, runtimeUrl: string): Promise<void> {
+    const response = await fetch(runtimeUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to download runtime for ${platform} from ${runtimeUrl}: HTTP ${response.status}`);
+    }
+
+    const tempRoot = await fs.mkdtemp(path.join(tmpdir(), `ib-mcp-runtime-${platform}-`));
+    const archivePath = path.join(tempRoot, 'runtime.tar.gz');
+    const extractDir = path.join(tempRoot, 'extract');
+    const installDir = path.join(this.jreDir, platform);
+    const stagingDir = path.join(this.jreDir, `${platform}.tmp-${process.pid}`);
+
+    try {
+      const archiveBuffer = Buffer.from(await response.arrayBuffer());
+      await fs.writeFile(archivePath, archiveBuffer);
+      await fs.mkdir(extractDir, { recursive: true });
+
+      await this.extractTarGz(archivePath, extractDir);
+
+      const extractedEntries = await fs.readdir(extractDir, { withFileTypes: true });
+      const extractedDir = extractedEntries.find((entry) => entry.isDirectory());
+      if (!extractedDir) {
+        throw new Error(`Downloaded runtime archive for ${platform} did not contain an extracted runtime directory`);
+      }
+
+      const extractedRuntimeDir = path.join(extractDir, extractedDir.name);
+      await fs.rm(stagingDir, { recursive: true, force: true });
+      await fs.rename(extractedRuntimeDir, stagingDir);
+      await fs.rm(installDir, { recursive: true, force: true });
+      await fs.rename(stagingDir, installDir);
+
+      this.log(`✅ Downloaded musl JRE for ${platform} (${packageJson.version})`);
+    } finally {
+      await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private async extractTarGz(archivePath: string, destinationDir: string): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const tarProcess = spawn('tar', ['-xzf', archivePath, '-C', destinationDir], {
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+
+      let stderr = '';
+      tarProcess.stderr?.on('data', (chunk) => {
+        stderr += chunk.toString();
+      });
+
+      tarProcess.on('error', reject);
+      tarProcess.on('exit', (code) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        reject(new Error(`Failed to extract runtime archive with tar (exit ${code}): ${stderr.trim() || 'no stderr captured'}`));
+      });
+    });
   }
 
   // Detect whether the current Linux system uses musl libc (Alpine, etc.) rather than glibc.
@@ -307,7 +395,7 @@ export class IBGatewayManager {
         }
       }
       
-      const bundledJavaPath = this.getJavaPath();
+      const bundledJavaPath = await this.getJavaPath();
       const bundledJavaHome = path.dirname(path.dirname(bundledJavaPath));
       const bundledJavaLibPath = path.join(bundledJavaHome, 'lib');
       const bundledJavaServerLibPath = path.join(bundledJavaLibPath, 'server');
@@ -461,10 +549,8 @@ export class IBGatewayManager {
 
   private diagnoseSpawnError(error: NodeJS.ErrnoException, javaPath: string): string {
     if (error.code === 'ENOENT' && process.platform === 'linux' && IBGatewayManager.isMuslLibc()) {
-      // Defensive: getJavaPath should have already routed to runtime/linux-*-musl. If we still hit
-      // ENOENT on musl it's almost certainly a missing musl runtime directory in this build.
-      return `Failed to spawn bundled JRE at ${javaPath}: musl libc detected but the musl JRE was not found. ` +
-        `If you built this package locally, ensure runtime/linux-x64-musl and runtime/linux-arm64-musl are present.`;
+      return `Failed to spawn bundled JRE at ${javaPath}: musl libc detected and the runtime is unavailable. ` +
+        `Ensure the host can download the public musl JRE fallback, or preinstall runtime/${IBGatewayManager.resolveRuntimePlatform()}.`;
     }
     if (error.code === 'ENOENT') {
       return `Failed to spawn bundled JRE at ${javaPath}: file not found or its dynamic loader is missing on this system.`;
@@ -529,4 +615,3 @@ export class IBGatewayManager {
     return this.currentPort;
   }
 }
-

@@ -73,3 +73,23 @@ describe('IBGatewayManager.isMuslLibc', () => {
     expect(IBGatewayManager.isMuslLibc('linux')).toBe(true);
   });
 });
+
+describe('IBGatewayManager runtime platform resolution', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('uses the plain platform-arch key for glibc Linux', () => {
+    vi.spyOn(IBGatewayManager, 'isMuslLibc').mockReturnValue(false);
+    expect((IBGatewayManager as unknown as {
+      resolveRuntimePlatform: (platform?: NodeJS.Platform, arch?: string) => string;
+    }).resolveRuntimePlatform('linux', 'x64')).toBe('linux-x64');
+  });
+
+  it('routes Linux musl environments to the musl runtime key', () => {
+    vi.spyOn(IBGatewayManager, 'isMuslLibc').mockReturnValue(true);
+    expect((IBGatewayManager as unknown as {
+      resolveRuntimePlatform: (platform?: NodeJS.Platform, arch?: string) => string;
+    }).resolveRuntimePlatform('linux', 'arm64')).toBe('linux-arm64-musl');
+  });
+});
