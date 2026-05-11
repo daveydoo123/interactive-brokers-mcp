@@ -42,10 +42,11 @@ your IB account to retrieve market data, check positions, and place trades.
 
 ## Prerequisites
 
-**No additional installations required!** This package includes:
+**No additional installations required for mainstream platforms.** This package includes:
 
 - Pre-configured IB Gateway for all platforms (Linux, macOS, Windows)
-- Java Runtime Environment (JRE) for IB Gateway, including a musl-libc build for Alpine-based containers (e.g. `node:lts-alpine`, supergateway)
+- Java Runtime Environment (JRE) for macOS, Windows, and standard Linux builds
+- Automatic first-run musl JRE download for Alpine-based containers (e.g. `node:lts-alpine`, supergateway)
 - All necessary dependencies
 
 You only need:
