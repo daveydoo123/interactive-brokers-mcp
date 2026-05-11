@@ -343,9 +343,9 @@ export class IBClient {
       this.isAuthenticated = false;
       this.stopTickle();
       if (this.authAttempts >= this.maxAuthAttempts) {
-        throw new Error(`Failed to authenticate with IB Gateway after ${this.maxAuthAttempts} attempts`);
+        throw new Error(`Failed to authenticate with IB Gateway after ${this.maxAuthAttempts} attempts: ${isError(error) ? error.message : String(error)}`);
       }
-      throw new Error("Failed to authenticate with IB Gateway");
+      throw error;
     }
   }
 
