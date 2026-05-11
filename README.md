@@ -227,13 +227,7 @@ MIT License - see LICENSE file for details.
 
 ## Thanks to our contributors
 
-A big thank you to everyone who has contributed to making this project better:
-
-- **NitayRabi** (Project Lead)
-- **shanehull**
-- **punkpeye**
-- **zlowred**
-- **proschu2**
+A big thank you to everyone who has contributed to making this project better.
 
 <a href="https://github.com/code-rabi/interactive-brokers-mcp/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=code-rabi/interactive-brokers-mcp" alt="Contributors" />
