@@ -38,6 +38,10 @@ type ToolHandlerResult = {
   }>;
 };
 
+type AuthGuardResult =
+  | { ok: true }
+  | { ok: false; result: ToolHandlerResult };
+
 export class ToolHandlers {
   private context: ToolHandlerContext;
 
@@ -68,27 +72,54 @@ export class ToolHandlers {
     }
   }
 
+  private buildAuthUrl(): string {
+    const port = this.context.gatewayManager
+      ? this.context.gatewayManager.getCurrentPort()
+      : this.context.config.IB_GATEWAY_PORT;
+    return `https://${this.context.config.IB_GATEWAY_HOST}:${port}`;
+  }
+
+  private textResult(text: string): ToolHandlerResult {
+    return {
+      content: [
+        {
+          type: "text",
+          text,
+        },
+      ],
+    };
+  }
+
+  private jsonResult(payload: unknown): ToolHandlerResult {
+    return this.textResult(JSON.stringify(payload, null, 2));
+  }
+
   // Authentication management
-  private async ensureAuth(): Promise<void> {
+  private async ensureAuth(): Promise<AuthGuardResult> {
     // Ensure Gateway is ready first
     await this.ensureGatewayReady();
     
     // Check if already authenticated
     const isAuthenticated = await this.context.ibClient.checkAuthenticationStatus();
     if (isAuthenticated) {
-      return; // Already authenticated
+      return { ok: true };
     }
 
-    // If in headless mode, start automatic headless authentication
+    // If in headless mode, start automatic headless authentication in the background
     if (this.context.config.IB_HEADLESS_MODE) {
-      const port = this.context.gatewayManager 
-        ? this.context.gatewayManager.getCurrentPort() 
-        : this.context.config.IB_GATEWAY_PORT;
-      const authUrl = `https://${this.context.config.IB_GATEWAY_HOST}:${port}`;
+      const authUrl = this.buildAuthUrl();
       
       // Validate that we have credentials for headless mode
       if (!this.context.config.IB_USERNAME || !this.context.config.IB_PASSWORD_AUTH) {
-        throw new Error("Headless mode enabled but authentication credentials missing. Please set IB_USERNAME and IB_PASSWORD_AUTH environment variables.");
+        return {
+          ok: false,
+          result: this.jsonResult({
+            success: false,
+            message: "Headless mode is enabled but authentication credentials are missing.",
+            error: "Set IB_USERNAME and IB_PASSWORD_AUTH to allow automatic headless authentication.",
+            authUrl,
+          }),
+        };
       }
 
       const authConfig: HeadlessAuthConfig = {
@@ -100,12 +131,32 @@ export class ToolHandlers {
         paperTrading: this.context.config.IB_PAPER_TRADING,
       };
 
+      // Trigger authentication in the background (non-blocking)
+      Logger.info("⚡ Background headless authentication triggered...");
       const authenticator = new HeadlessAuthenticator();
-      const result = await authenticator.authenticate(authConfig);
-
-      if (!result.success) {
-        throw new Error(`Authentication failed: ${result.message}`);
+      const p = authenticator.authenticate(authConfig);
+      if (p && typeof p.then === "function") {
+        p.then(async (result) => {
+          await authenticator.close().catch(() => {});
+          Logger.info(`🎯 Background headless authentication completed: success=${result.success}`);
+        }).catch(async (err) => {
+          await authenticator.close().catch(() => {});
+          Logger.error("❌ Background headless authentication failed:", err);
+        });
       }
+
+      // Throw a standard Error that formatError knows how to parse or that is easy to check
+      const payload = {
+        status: "AWAITING_AUTHENTICATION",
+        message: `Authentication has been automatically triggered in the background. Please check your mobile device for the IB Key 2FA push notification or log in manually at ${authUrl} to authenticate. Once completed, re-run this command.`,
+        url: authUrl,
+        requiresAction: true
+      };
+      
+      return {
+        ok: false,
+        result: this.jsonResult(payload),
+      };
     } else {
       // In non-headless mode, check if the gateway is already authenticated
       // (the user may have completed browser auth via the authenticate tool)
@@ -133,6 +184,8 @@ export class ToolHandlers {
         const authUrl = `https://${this.context.config.IB_GATEWAY_HOST}:${port}`;
         throw new Error(`Authentication required. Please use the 'authenticate' tool to complete the authentication process at ${authUrl}.`);
       }
+
+      return { ok: true };
     }
   }
 
@@ -157,10 +210,7 @@ export class ToolHandlers {
   }
 
   private getAuthenticationErrorMessage(): string {
-    const port = this.context.gatewayManager 
-      ? this.context.gatewayManager.getCurrentPort() 
-      : this.context.config.IB_GATEWAY_PORT;
-    const authUrl = `https://${this.context.config.IB_GATEWAY_HOST}:${port}`;
+    const authUrl = this.buildAuthUrl();
     const mode = this.context.config.IB_HEADLESS_MODE ? "headless mode" : "browser mode";
     return `Authentication required. Please use the 'authenticate' tool to complete the authentication process (configured for ${mode}) at ${authUrl}.`;
   }
@@ -384,7 +434,10 @@ export class ToolHandlers {
       
       // Ensure authentication in headless mode
       if (this.context.config.IB_HEADLESS_MODE) {
-        await this.ensureAuth();
+        const auth = await this.ensureAuth();
+        if (!auth.ok) {
+          return auth.result;
+        }
       }
       
       const result = await this.context.ibClient.getAccountInfo();
@@ -425,7 +478,10 @@ export class ToolHandlers {
       
       // Ensure authentication in headless mode
       if (this.context.config.IB_HEADLESS_MODE) {
-        await this.ensureAuth();
+        const auth = await this.ensureAuth();
+        if (!auth.ok) {
+          return auth.result;
+        }
       }
       
       const result = await this.context.ibClient.getPositions(input.accountId);
@@ -456,7 +512,10 @@ export class ToolHandlers {
       
       // Ensure authentication in headless mode
       if (this.context.config.IB_HEADLESS_MODE) {
-        await this.ensureAuth();
+        const auth = await this.ensureAuth();
+        if (!auth.ok) {
+          return auth.result;
+        }
       }
       
       const result = await this.context.ibClient.getMarketData(input.symbol, input.exchange);
@@ -487,7 +546,10 @@ export class ToolHandlers {
       
       // Ensure authentication in headless mode
       if (this.context.config.IB_HEADLESS_MODE) {
-        await this.ensureAuth();
+        const auth = await this.ensureAuth();
+        if (!auth.ok) {
+          return auth.result;
+        }
       }
       
       const result = await this.context.ibClient.placeOrder({
@@ -529,7 +591,10 @@ export class ToolHandlers {
       
       // Ensure authentication in headless mode
       if (this.context.config.IB_HEADLESS_MODE) {
-        await this.ensureAuth();
+        const auth = await this.ensureAuth();
+        if (!auth.ok) {
+          return auth.result;
+        }
       }
       
       const result = await this.context.ibClient.getOrderStatus(input.orderId);
@@ -560,7 +625,10 @@ export class ToolHandlers {
       
       // Ensure authentication in headless mode
       if (this.context.config.IB_HEADLESS_MODE) {
-        await this.ensureAuth();
+        const auth = await this.ensureAuth();
+        if (!auth.ok) {
+          return auth.result;
+        }
       }
       
       // Pass accountId as query parameter if provided
@@ -592,7 +660,10 @@ export class ToolHandlers {
       
       // Ensure authentication in headless mode
       if (this.context.config.IB_HEADLESS_MODE) {
-        await this.ensureAuth();
+        const auth = await this.ensureAuth();
+        if (!auth.ok) {
+          return auth.result;
+        }
       }
       
       const result = await this.context.ibClient.confirmOrder(input.replyId, input.messageIds);
@@ -623,7 +694,10 @@ export class ToolHandlers {
       
       // Ensure authentication in headless mode
       if (this.context.config.IB_HEADLESS_MODE) {
-        await this.ensureAuth();
+        const auth = await this.ensureAuth();
+        if (!auth.ok) {
+          return auth.result;
+        }
       }
       
       const result = await this.context.ibClient.getAlerts(input.accountId);
@@ -654,7 +728,10 @@ export class ToolHandlers {
       
       // Ensure authentication in headless mode
       if (this.context.config.IB_HEADLESS_MODE) {
-        await this.ensureAuth();
+        const auth = await this.ensureAuth();
+        if (!auth.ok) {
+          return auth.result;
+        }
       }
       
       const result = await this.context.ibClient.createAlert(input.accountId, input.alertRequest);
@@ -685,7 +762,10 @@ export class ToolHandlers {
       
       // Ensure authentication in headless mode
       if (this.context.config.IB_HEADLESS_MODE) {
-        await this.ensureAuth();
+        const auth = await this.ensureAuth();
+        if (!auth.ok) {
+          return auth.result;
+        }
       }
       
       const result = await this.context.ibClient.activateAlert(input.accountId, input.alertId);
@@ -716,7 +796,10 @@ export class ToolHandlers {
       
       // Ensure authentication in headless mode
       if (this.context.config.IB_HEADLESS_MODE) {
-        await this.ensureAuth();
+        const auth = await this.ensureAuth();
+        if (!auth.ok) {
+          return auth.result;
+        }
       }
       
       const result = await this.context.ibClient.deleteAlert(input.accountId, input.alertId);
