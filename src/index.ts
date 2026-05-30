@@ -52,6 +52,7 @@ function parseArgs(): z.infer<typeof configSchema> {
           Logger.debug(`🔍 Set IB_AUTH_POLL_SECONDS to: ${nextArg}`);
           i++;
           break;
+
         case 'ib-headless-mode':
           // Support both --ib-headless-mode (boolean flag) and --ib-headless-mode=true/false
           if (nextArg && !nextArg.startsWith('--')) {
@@ -114,6 +115,7 @@ function parseArgs(): z.infer<typeof configSchema> {
           args.IB_AUTH_POLL_SECONDS = parseInt(value);
           Logger.debug(`🔍 Set IB_AUTH_POLL_SECONDS to: ${value}`);
           break;
+
         case 'ib-headless-mode':
           args.IB_HEADLESS_MODE = value.toLowerCase() === 'true';
           Logger.debug(`🔍 Set IB_HEADLESS_MODE to: ${value.toLowerCase() === 'true'} (from value: ${value})`);
